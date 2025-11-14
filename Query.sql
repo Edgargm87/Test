@@ -101,18 +101,27 @@ AS $$
         --  * El identificador ya no se deja vacio.  Cuando estaba asi, todos los
         --    usuarios terminaban consultando el mismo key_ref ('') en
         --    tem.liquidacion_aval_temporal.
-        --  * Al competir por el mismo registro, las ejecuciones concurrentes quedaban
-        --    en espera o bloqueadas.
+        --  * En los monitoreos de pg_locks se veian varias sesiones esperando sobre
+        --    el mismo registro de esa tabla (wait_event = transactionid).  Mientras
+        --    una sesion cargaba/actualizaba el aval en la fila compartida, el resto
+        --    quedaba "pegado" esperando a que se liberara el candado.
         --  * Ahora cada invocacion arma su propio identificador utilizando los datos
         --    del cliente/pagaduria/fondo o, en su defecto, el txid de la sesion.
         --  * Con esto cada llamada trabaja sobre una llave distinta y se evita el
-        --    cuello de botella.
-        v_vc_identificador := coalesce(
-                                        nullif(p_vc_id_cliente,''),
-                                        nullif(p_vc_nit_afiliado,''),
-                                        nullif(p_vc_nit_empresa_fondo,''),
-                                        txid_current()::varchar
+        --    cuello de botella porque cada transaccion opera sobre su propia fila.
+        v_vc_identificador := COALESCE(
+                                        NULLIF(p_vc_id_cliente,''),
+                                        NULLIF(p_vc_nit_afiliado,''),
+                                        NULLIF(p_vc_nit_empresa_fondo,'')
                                       );
+
+        --  PostgreSQL 8.2 no expone txid_current(), asi que cuando ninguno de los
+        --  identificadores funcionales viene informado se genera uno sintético
+        --  utilizando timestamp + pid.  La combinacion es suficientemente
+        --  específica para evitar colisiones entre sesiones concurrentes.
+        IF v_vc_identificador IS NULL THEN
+            v_vc_identificador := to_char(clock_timestamp(),'YYYYMMDDHH24MISSUS') || '_' || pg_backend_pid();
+        END IF;
         
         --1.) Validacion de variables de entrada del liquidador
         IF p_vc_tipo_simulacion NOT IN ('LIQUIDAR','SIMULAR','REFINANCIAR') THEN 
