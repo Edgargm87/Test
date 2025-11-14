@@ -96,6 +96,23 @@ AS $$
         v_vc_identificacion VARCHAR;
     
     BEGIN
+
+        -- Ajuste implementado:
+        --  * El identificador ya no se deja vacio.  Cuando estaba asi, todos los
+        --    usuarios terminaban consultando el mismo key_ref ('') en
+        --    tem.liquidacion_aval_temporal.
+        --  * Al competir por el mismo registro, las ejecuciones concurrentes quedaban
+        --    en espera o bloqueadas.
+        --  * Ahora cada invocacion arma su propio identificador utilizando los datos
+        --    del cliente/pagaduria/fondo o, en su defecto, el txid de la sesion.
+        --  * Con esto cada llamada trabaja sobre una llave distinta y se evita el
+        --    cuello de botella.
+        v_vc_identificador := coalesce(
+                                        nullif(p_vc_id_cliente,''),
+                                        nullif(p_vc_nit_afiliado,''),
+                                        nullif(p_vc_nit_empresa_fondo,''),
+                                        txid_current()::varchar
+                                      );
         
         --1.) Validacion de variables de entrada del liquidador
         IF p_vc_tipo_simulacion NOT IN ('LIQUIDAR','SIMULAR','REFINANCIAR') THEN 
